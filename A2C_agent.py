@@ -9,45 +9,43 @@ class A2C(nn.Module):
     """
     (Synchronous) Advantage Actor-Critic agent class
     Args:
-        n_features: The number of features of the input state.
-        n_actions: The number of actions the agent can take.
+        n_features_state: The number of features of the input state.
+        n_features_action: The number of actions the agent can take.
         device: The device to run the computations on (running on a GPU might be quicker for larger Neural Nets,
                 for this code CPU is totally fine).
         critic_lr: The learning rate for the critic network (should usually be larger than the actor_lr).
         actor_lr: The learning rate for the actor network.
-        n_envs: The number of environments that run in parallel (on multiple CPUs) to collect experiences.
     Adaptated from https://gymnasium.farama.org/tutorials/gymnasium_basics/vector_envs_tutorial/
     """
 
     def __init__(
         self,
-        n_features: int,
-        n_actions: int,
+        n_features_state: int,
+        n_features_action: int,
+        hidden_size: int,
         device: torch.device,
         critic_lr: float,
         actor_lr: float,
-        n_envs: int,
     ) -> None:
         """Initializes the actor and critic networks and their respective optimizers."""
         super().__init__()
         self.device = device
-        self.n_envs = n_envs
 
         critic_layers = [
-            nn.Linear(n_features, 32),
+            nn.Linear(n_features_state, hidden_size),
             nn.ReLU(),
-            nn.Linear(32, 32),
+            nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(32, 1),  # estimate V(s)
+            nn.Linear(hidden_size, 1),  # estimate V(s)
         ]
 
         actor_layers = [
-            nn.Linear(n_features, 32),
+            nn.Linear(n_features_state, hidden_size),
             nn.ReLU(),
-            nn.Linear(32, 32),
+            nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
             nn.Linear(
-                32, n_actions
+                hidden_size, n_features_action
             ),  # estimate action logits (will be fed into a softmax later)
         ]
 
@@ -65,13 +63,13 @@ class A2C(nn.Module):
         Args:
             x: A batched vector of states.
         Returns:
-            state_values: A tensor with the state values, with shape [n_envs,].
-            action_logits_vec: A tensor with the action logits, with shape [n_envs, n_actions].
+            state_value: A tensor with the state value, with shape [1,].
+            action_logits_vec: A tensor with the action logits, with shape [n_features_action].
         """
         x = torch.Tensor(x).to(self.device)
-        state_values = self.critic(x)  # shape: [n_envs,]
-        action_logits_vec = self.actor(x)  # shape: [n_envs, n_actions]
-        return (state_values, action_logits_vec)
+        state_value = self.critic(x)  # shape: [1,] value given by the critic at the state
+        action_logits_vec = self.actor(x)  # shape: [n_features_action]
+        return (state_value, action_logits_vec)
 
     def select_action(
         self, x: np.ndarray
@@ -79,20 +77,20 @@ class A2C(nn.Module):
         """
         Returns a tuple of the chosen actions and the log-probs of those actions.
         Args:
-            x: A batched vector of states.
+            x: A state vector.
         Returns:
-            actions: A tensor with the actions, with shape [n_steps_per_update, n_envs].
-            action_log_probs: A tensor with the log-probs of the actions, with shape [n_steps_per_update, n_envs].
-            state_values: A tensor with the state values, with shape [n_steps_per_update, n_envs].
+            action: A tensor with the action, with shape [].
+            action_log_probs: A tensor with the log-probs of the actions, with shape [].
+            state_value: A tensor with the state value given by the critic, with shape [].
         """
-        state_values, action_logits = self.forward(x)
+        state_value, action_logits = self.forward(x)
         action_pd = torch.distributions.Categorical(
             logits=action_logits
         )  # implicitly uses softmax
-        actions = action_pd.sample()
-        action_log_probs = action_pd.log_prob(actions)
+        action = action_pd.sample()
+        action_log_probs = action_pd.log_prob(action)
         entropy = action_pd.entropy()
-        return (actions, action_log_probs, state_values, entropy)
+        return (action, action_log_probs, state_value, entropy)
 
     def get_losses(
         self,
@@ -110,10 +108,10 @@ class A2C(nn.Module):
         Computes the loss of a minibatch (transitions collected in one sampling phase) for actor and critic
         using Generalized Advantage Estimation (GAE) to compute the advantages (https://arxiv.org/abs/1506.02438).
         Args:
-            rewards: A tensor with the rewards for each time step in the episode, with shape [n_steps_per_update, n_envs].
-            action_log_probs: A tensor with the log-probs of the actions taken at each time step in the episode, with shape [n_steps_per_update, n_envs].
-            value_preds: A tensor with the state value predictions for each time step in the episode, with shape [n_steps_per_update, n_envs].
-            masks: A tensor with the masks for each time step in the episode, with shape [n_steps_per_update, n_envs].
+            rewards: A tensor with the rewards for each time step in the episode, with shape [n_steps_per_update].
+            action_log_probs: A tensor with the log-probs of the actions taken at each time step in the episode, with shape [n_steps_per_update].
+            value_preds: A tensor with the state value predictions for each time step in the episode, with shape [n_steps_per_update].
+            masks: A tensor with the masks for each time step in the episode, with shape [n_steps_per_update].
             gamma: The discount factor.
             lam: The GAE hyperparameter. (lam=1 corresponds to Monte-Carlo sampling with high variance and no bias,
                                           and lam=0 corresponds to normal TD-Learning that has a low variance but is biased
@@ -124,7 +122,7 @@ class A2C(nn.Module):
             actor_loss: The actor loss for the minibatch.
         """
         T = len(rewards)
-        advantages = torch.zeros(T, self.n_envs, device=device)
+        advantages = torch.zeros(T, device=device)
 
         # compute the advantages using GAE
         gae = 0.0
