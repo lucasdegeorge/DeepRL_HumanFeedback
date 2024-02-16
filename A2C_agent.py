@@ -61,7 +61,7 @@ class A2C(nn.Module):
         """
         Forward pass of the networks.
         Args:
-            x: A batched vector of states.
+            x: A state vector.
         Returns:
             state_value: A tensor with the state value, with shape [1,].
             action_logits_vec: A tensor with the action logits, with shape [n_features_action].
