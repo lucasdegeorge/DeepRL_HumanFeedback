@@ -1,192 +1,178 @@
 #%% 
 import gymnasium as gym
 import torch
-from tqdm import tqdm
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 
 from A2C_agent import A2C
 from reward_predictor import Reward_predictor
 from human_feedback import Human
 
+class Trainer:
+    def __init__(self, env_name: str, 
+        n_updates: int, 
+        n_steps_per_update: int,
+        n_trajectories: int, 
+        hidden_size: int,
+        n_comp: int
+    ):
+        # Environment setup 
+        self.env_name = env_name
+        self.env = gym.make(env_name)
+        self.env.reset()
 
-# environment hyperparams
-n_updates = 8 # 100
-n_steps_per_update = 16
-n_trajectories = 2
+        self.n_features_state = self.env.observation_space.shape[0]
+        self.n_features_action = self.env.action_space.n
 
-# A2C agent hyperparams
-gamma = 0.999
-lam = 0.95  # hyperparameter for GAE
-ent_coef = 0.01  # coefficient for the entropy bonus (to encourage exploration)
-actor_lr = 0.001
-critic_lr = 0.005
+        self.dict_actions = {
+            0: "do nothing",
+            1: "fire left orientation engine",
+            2: "fire main engine",
+            3: "fire right orientation engine"
+        }
 
-# reward predictor hyperparams
-reward_lr = 0.005
-hidden_size = 32
-n_comp = 2
+        self.n_updates = n_updates
+        self.n_steps_per_update = n_steps_per_update
+        self.n_trajectories = n_trajectories
 
-# environment setup
-env = gym.make("LunarLander-v2")
-env.reset()  # Is it mandatory ? 
-max_episode_steps = env.spec.max_episode_steps
+        # Device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print("device:", self.device)
 
-n_features_state = env.observation_space.shape[0]  # state_shape
-n_features_action = env.action_space.n  # action_shape
+        # A2C hyperparams
+        self.gamma = 0.999
+        self.lam = 0.95  # hyperparameter for GAE
+        self.ent_coef = 0.01  # coefficient for the entropy bonus (to encourage exploration)
+        actor_lr = 0.001
+        critic_lr = 0.005
 
-dict_actions = {
-    0: "do nothing",
-    1: "fire left orientation engine",
-    2: "fire main engine",
-    3: "fire right orientation engine"
-}
+        # reward predictor hyperparams
+        reward_lr = 0.005
+        hidden_size = 32
+        self.n_comp = n_comp
 
+        # Init the agent
+        self.agent = A2C(self.n_features_state, self.n_features_action, hidden_size, self.device, critic_lr, actor_lr)
+        # Init the reward
+        self.reward_predictor = Reward_predictor(self.n_features_state, self.n_features_action, hidden_size, self.device, reward_lr)
+        # Init the human
+        self.human = Human(self.n_features_state, self.n_features_action, n_steps_per_update, self.dict_actions)
 
-# set the device
-use_cuda = False
-if use_cuda:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-else:
-    device = torch.device("cpu")
-print("device:", device)
+        self.critic_losses = []
+        self.actor_losses = []
+        self.entropies = []
+        self.estimated_rewards = []
+        self.real_rewards = []
 
-# init the agent
-agent = A2C(n_features_state, n_features_action, hidden_size, device, critic_lr, actor_lr)
-# init the reward
-reward_predictor = Reward_predictor(n_features_state, n_features_action, hidden_size, device, reward_lr)
-# init the human 
-human = Human(n_features_state, n_features_action, n_steps_per_update, dict_actions)
+    def train(self):
+        for sample_phase in tqdm(range(self.n_updates)):
+            all_trajectories = torch.zeros((self.n_trajectories, self.n_steps_per_update, self.n_features_state + self.n_features_action), device=self.device)
 
-critic_losses = []
-actor_losses = []
-entropies = []
+            for traj_idx in range(self.n_trajectories):
+                ep_value_preds = torch.zeros(self.n_steps_per_update, device=self.device)
+                ep_rewards = torch.zeros(self.n_steps_per_update, device=self.device)
+                ep_real_rewards = torch.zeros(self.n_steps_per_update, device=self.device)
+                ep_action_log_probs = torch.zeros(self.n_steps_per_update, device=self.device)
+                masks = torch.zeros(self.n_steps_per_update, device=self.device)
 
+                ep_states = torch.zeros((self.n_steps_per_update, self.n_features_state), device=self.device)
+                ep_actions = torch.zeros((self.n_steps_per_update, self.n_features_action), device=self.device)
 
-for sample_phase in tqdm(range(n_updates)):
-    
-    all_trajectories = torch.zeros((n_trajectories, n_steps_per_update, n_features_state+n_features_action), device=device)
+                if sample_phase == 0:
+                    state, _ = self.env.reset()
 
-    for traj_idx in range(n_trajectories):
+                for step in range(self.n_steps_per_update):
+                    ep_states[step] = torch.from_numpy(state)
+                    action, action_log_prob, state_value_pred, entropy = self.agent.select_action(state)
+                    ep_actions[step] = F.one_hot(action, num_classes=4)
 
-        ### Process 1 ###
+                    state, real_reward, terminated, _, _ = self.env.step(action.item())
+                    reward = self.reward_predictor(state, F.one_hot(action, num_classes=4)).item()
 
-        ep_value_preds = torch.zeros(n_steps_per_update, device=device)
-        ep_rewards = torch.zeros(n_steps_per_update, device=device)
-        ep_action_log_probs = torch.zeros(n_steps_per_update, device=device)
-        masks = torch.zeros(n_steps_per_update, device=device)
+                    ep_value_preds[step] = state_value_pred
+                    ep_rewards[step] = torch.tensor(reward, device=self.device)
+                    ep_action_log_probs[step] = action_log_prob
+                    ep_real_rewards[step] = torch.tensor(real_reward, device=self.device)
 
-        ep_states = torch.zeros((n_steps_per_update, n_features_state), device=device)  # Store states
-        ep_actions = torch.zeros((n_steps_per_update, n_features_action), device=device)  # Store actions
+                    masks[step] = torch.tensor([not terminated])
 
-        if sample_phase == 0:
-            state, infos = env.reset()
+                critic_loss, actor_loss = self.agent.get_losses(
+                    ep_rewards,  # replace ep_rewards by ep_real_rewards to get a classical A2C training
+                    ep_action_log_probs,
+                    ep_value_preds,
+                    entropy,
+                    masks, 
+                    self.gamma,
+                    self.lam,
+                    self.ent_coef,
+                    self.device,
+                )
 
-        # play n steps in the environment to collect data
-        for step in range(n_steps_per_update):
+                self.agent.update_parameters(critic_loss, actor_loss)
 
-            # select an action A_{t} using S_{t} as input for the agent
-            ep_states[step] = torch.from_numpy(state)
-            action, action_log_prob, state_value_pred, entropy = agent.select_action(state)
-            ep_actions[step] = F.one_hot(action, num_classes=4)
+                self.critic_losses.append(critic_loss.detach().cpu().numpy().item())
+                self.actor_losses.append(actor_loss.detach().cpu().numpy().item())
+                self.entropies.append(entropy.detach().mean().cpu().numpy().item())
+                self.estimated_rewards = np.concatenate([self.estimated_rewards, ep_rewards.detach().cpu().numpy()])
+                self.real_rewards = np.concatenate([self.real_rewards, ep_real_rewards.detach().cpu().numpy()])
 
-            # perform the action A_{t} in the environment to get S_{t+1}. 
-            state, reward, terminated, truncated, _ = env.step(action.item())
-            # get \hat{R}_{t+1} from the reward predictor
-            reward = reward_predictor(state, F.one_hot(action, num_classes=4)).item()
+                all_trajectories[traj_idx] = torch.cat([ep_states, ep_actions], dim=1)
 
-            ep_value_preds[step] = state_value_pred
-            ep_rewards[step] = torch.tensor(reward, device=device)
-            ep_action_log_probs[step] = action_log_prob
+            reward_loss = self.reward_predictor.compute_loss(all_trajectories, self.n_comp, self.human)
+            self.reward_predictor.update_parameters(reward_loss)
 
-            masks[step] = torch.tensor([not terminated])
+    def plot_results(self, print_real=False):
+        fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(12, 5))
+        fig.suptitle(f"Training plots for {self.agent.__class__.__name__} in the {self.env_name} environment")
 
-        # calculate the losses for actor and critic
-        critic_loss, actor_loss = agent.get_losses(
-            ep_rewards,
-            ep_action_log_probs,
-            ep_value_preds,
-            entropy,
-            masks,
-            gamma,
-            lam,
-            ent_coef,
-            device,
+        axs[0][0].set_title("Rewards")
+        axs[0][0].plot(
+            np.arange(len(self.estimated_rewards)),
+            self.estimated_rewards,
+            label="Estimated rewards"
         )
+        if print_real:
+            axs[0][0].plot(
+                np.arange(len(self.real_rewards)),
+                self.real_rewards, 
+                label="Real rewards"
+            )
+        axs[0][0].legend()
+        axs[0][0].set_xlabel("Rewards (estimated and real)")
 
-        # update the actor and critic networks
-        agent.update_parameters(critic_loss, actor_loss)
+        axs[1][0].set_title("Entropy")
+        axs[1][0].plot(
+            np.arange(len(self.entropies)),
+            self.entropies)
+        axs[1][0].set_xlabel("Number of updates")
 
-        # log the losses and entropy
-        critic_losses.append(critic_loss.detach().cpu().numpy())
-        actor_losses.append(actor_loss.detach().cpu().numpy())
-        entropies.append(entropy.detach().mean().cpu().numpy())
+        axs[0][1].set_title("Critic Loss")
+        axs[0][1].plot(
+            np.arange(len(self.critic_losses)),
+            self.critic_losses)
+        axs[0][1].set_xlabel("Number of updates")
 
-        ### Process 2
-        all_trajectories[traj_idx] = torch.cat([ep_states, ep_actions], dim=1)
-    
-    ### Process 3
-    reward_loss = reward_predictor.compute_loss(all_trajectories, n_comp, human)
-    reward_predictor.update_parameters(reward_loss)
+        axs[1][1].set_title("Actor Loss")
+        axs[1][1].plot(
+            np.arange(len(self.actor_losses)),
+            self.actor_losses)
+        axs[1][1].set_xlabel("Number of updates")
+
+        plt.tight_layout()
+        plt.show()
 
 
-#%% 
 
-## Plotting 
-rolling_length = 20
-fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(12, 5))
-fig.suptitle(
-    f"Training plots for {agent.__class__.__name__} in the LunarLander-v2 environment \n \
-             (n_steps_per_update={n_steps_per_update})"
+trainer = Trainer(
+    env_name="LunarLander-v2",
+    n_updates=100,
+    n_steps_per_update=128,
+    n_trajectories=2,
+    hidden_size=32,
+    n_comp=2
 )
 
-# episode return
-# axs[0][0].set_title("Episode Returns")
-# episode_returns_moving_average = (
-#     np.convolve(
-#         np.array(envs_wrapper.return_queue).flatten(),
-#         np.ones(rolling_length),
-#         mode="valid",
-#     )
-#     / rolling_length
-# )
-# axs[0][0].plot(
-#     np.arange(len(episode_returns_moving_average)) / n_envs,
-#     episode_returns_moving_average,
-# )
-# axs[0][0].set_xlabel("Number of episodes")
-
-# entropy
-axs[1][0].set_title("Entropy")
-entropy_moving_average = (
-    np.convolve(np.array(entropies), np.ones(rolling_length), mode="valid")
-    / rolling_length
-)
-axs[1][0].plot(entropy_moving_average)
-axs[1][0].set_xlabel("Number of updates")
-
-
-# critic loss
-axs[0][1].set_title("Critic Loss")
-critic_losses_moving_average = (
-    np.convolve(
-        np.array(critic_losses).flatten(), np.ones(rolling_length), mode="valid"
-    )
-    / rolling_length
-)
-axs[0][1].plot(critic_losses_moving_average)
-axs[0][1].set_xlabel("Number of updates")
-
-
-# actor loss
-axs[1][1].set_title("Actor Loss")
-actor_losses_moving_average = (
-    np.convolve(np.array(actor_losses).flatten(), np.ones(rolling_length), mode="valid")
-    / rolling_length
-)
-axs[1][1].plot(actor_losses_moving_average)
-axs[1][1].set_xlabel("Number of updates")
-
-plt.tight_layout()
-plt.show()
+trainer.train()
+trainer.plot_results()
