@@ -97,7 +97,7 @@ class Reward_predictor(nn.Module):
             estimated_pref[idx] = self.estimate_preferences(all_trajectories[traj_1_idx], all_trajectories[traj_2_idx])  # each has shape [2]
             human_pref[idx] = human.compare(all_trajectories[traj_1_idx], all_trajectories[traj_2_idx])  # each has shape [2]
         loss = nn.CrossEntropyLoss(reduction='sum')(estimated_pref, human_pref)
-        print("loss", loss.item())
+        # print("loss", loss.item())
         return loss
 
     def update_parameters(
