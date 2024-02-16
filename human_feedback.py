@@ -28,6 +28,9 @@ class Human():
         Returns:
             tensor of shape [2] containing the human preferences. 
         """
+        # for tests only
+        # return torch.softmax(torch.rand(2), dim=0)
+    
         actions_1 = traj_1[:,self.n_features_state:]
         actions_2 = traj_2[:,self.n_features_state:]
 
