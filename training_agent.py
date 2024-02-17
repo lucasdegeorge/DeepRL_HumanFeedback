@@ -169,12 +169,12 @@ class Trainer:
 
 trainer = Trainer(
     env_name="LunarLander-v2",
-    n_updates=5,
+    n_updates=100,
     n_steps_per_update=128,
     n_trajectories=15,
     segment_length=32,
     hidden_size=32,
-    n_comp=1
+    n_comp=4
 )
 
 trainer.train()
