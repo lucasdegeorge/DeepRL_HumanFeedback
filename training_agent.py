@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
+import csv
 
 from A2C_agent import A2C
 from reward_predictor import Reward_predictor
@@ -12,6 +13,7 @@ from human_feedback import Human
 
 class Trainer:
     def __init__(self, env_name: str, 
+        exp_number: int,
         n_updates: int, 
         n_steps_per_update: int,
         n_trajectories: int, 
@@ -46,7 +48,7 @@ class Trainer:
         # A2C hyperparams
         self.gamma = 0.999
         self.lam = 0.95  # hyperparameter for GAE
-        self.ent_coef = 0.01  # coefficient for the entropy bonus (to encourage exploration)
+        self.ent_coef = 0.1  # coefficient for the entropy bonus (to encourage exploration)
         actor_lr = 0.001
         critic_lr = 0.005
 
@@ -67,6 +69,8 @@ class Trainer:
         self.entropies = []
         self.estimated_rewards = []
         self.real_rewards = []
+
+        self.exp_number = exp_number
 
     def train(self):
         for sample_phase in tqdm(range(self.n_updates)):
@@ -124,6 +128,22 @@ class Trainer:
 
             reward_loss = self.reward_predictor.compute_loss(all_trajectories, self.n_comp, self.human)
             self.reward_predictor.update_parameters(reward_loss)
+            self.save_results(sample_phase)
+    
+    
+    def save_results(self, sample):
+        data = zip(self.critic_losses, 
+            self.actor_losses, 
+            self.entropies, 
+            self.estimated_rewards.tolist(), 
+            self.real_rewards.tolist()
+        )
+
+        with open(f"logs/exp{self.exp_number}_sample{sample}.csv", 'w', newline='') as csvfile:
+            csv_writer = csv.writer(csvfile)
+            csv_writer.writerow(['critic loss', 'actor loss', 'entropy', 'estimated rewards', 'real rewards'])
+            csv_writer.writerows(data)
+
 
     def plot_results(self, print_real=False):
         fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(12, 5))
@@ -169,12 +189,13 @@ class Trainer:
 
 trainer = Trainer(
     env_name="LunarLander-v2",
+    exp_number=0,
     n_updates=100,
     n_steps_per_update=100,
     n_trajectories=15,
     segment_length=32,
     hidden_size=32,
-    n_comp=4
+    n_comp=1
 )
 
 trainer.train()
