@@ -58,7 +58,7 @@ class Trainer:
         # Init the agent
         self.agent = A2C(self.n_features_state, self.n_features_action, hidden_size, self.device, critic_lr, actor_lr)
         # Init the reward
-        self.reward_predictor = Reward_predictor(self.n_features_state, self.n_features_action, hidden_size, self.device, reward_lr)
+        self.reward_predictor = Reward_predictor(self.n_features_state, self.n_features_action, hidden_size, self.n_steps_per_update, self.segment_length, self.device, reward_lr)
         # Init the human
         self.human = Human(self.n_features_state, self.n_features_action, n_steps_per_update, self.segment_length, self.dict_actions)
 
@@ -170,7 +170,7 @@ class Trainer:
 trainer = Trainer(
     env_name="LunarLander-v2",
     n_updates=100,
-    n_steps_per_update=128,
+    n_steps_per_update=100,
     n_trajectories=15,
     segment_length=32,
     hidden_size=32,

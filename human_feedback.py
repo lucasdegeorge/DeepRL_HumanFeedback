@@ -19,7 +19,7 @@ class Human():
         self.segment_length = segment_length
         self.dict_actions = dict_actions
 
-    def compare(self, traj_1: torch.Tensor, traj_2: torch.Tensor) -> torch.Tensor:
+    def compare(self, traj_1: torch.Tensor, traj_2: torch.Tensor, start: int) -> torch.Tensor:
         """
         Shows the two trajectories to the human annotator using Gymanasium render
         Asks for the best trajectory
@@ -27,13 +27,13 @@ class Human():
         Args: 
             traj_1: tensor of size [n_steps_per_update, n_features_state + n_features_state]
             traj_2: tensor of size [n_steps_per_update, n_features_state + n_features_action]
+            start: begining of the segments
         Returns:
             tensor of shape [2] containing the human preferences. 
         """
         # for tests only
         # return torch.softmax(torch.rand(2), dim=0)
 
-        start = np.random.randint(0, self.n_steps_per_update - self.segment_length)
         end = start + self.segment_length
     
         actions_1 = traj_1[:,self.n_features_state:]

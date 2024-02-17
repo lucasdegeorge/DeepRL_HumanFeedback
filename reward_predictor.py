@@ -12,10 +12,12 @@ class Reward_predictor(nn.Module):
     Args:
         n_features_state: The number of features of the input state.
         n_features_action: The number of features of the input action (=|A|)
+        hidden_size: size of the embeddings
+        n_steps_per_update
+        segment_length
         device: The device to run the computations on (running on a GPU might be quicker for larger Neural Nets,
                 for this code CPU is totally fine).
         lr: The learning rate
-        n_envs: The number of environments that run in parallel (on multiple CPUs) to collect experiences.
     """
 
     def __init__(
@@ -23,6 +25,8 @@ class Reward_predictor(nn.Module):
         n_features_state: int,
         n_features_action: int,
         hidden_size: int, 
+        n_steps_per_update: int,
+        segment_length: int,
         device: torch.device,
         lr: float,
     ) -> None:
@@ -31,6 +35,9 @@ class Reward_predictor(nn.Module):
         self.device = device
         self.n_features_state = n_features_state
         self.n_features_action = n_features_action
+        self.n_steps_per_update = n_steps_per_update
+        self.segment_length = segment_length
+
 
         layers = [
             nn.Linear(n_features_state + n_features_action, hidden_size),
@@ -62,13 +69,14 @@ class Reward_predictor(nn.Module):
         estimated_reward = self.reward(x)  # shape: []
         return estimated_reward
     
-    def estimate_preferences(self, traj_1: torch.Tensor, traj_2: torch.Tensor):
+    def estimate_preferences(self, traj_1: torch.Tensor, traj_2: torch.Tensor, start: int):
         """
         Predict probability of human preferring one segment over another. 
         Args: 
             traj_1: tensors containing the states and the actions of trajectory 1 
             traj_2: tensors containing the states and the actions tensors of trajectory 2
             (tensor ofshape [n_steps_per_update, n_features_state+n_features_action])
+            start: begining of the segments
         Returns:
             A tensor with the estamed preferences.
         """
@@ -94,8 +102,9 @@ class Reward_predictor(nn.Module):
         human_pref = torch.zeros(n_comp, 2)
         couples = np.random.randint(0, all_trajectories.shape[0], n_comp*2).reshape((2,-1))
         for idx, (traj_1_idx, traj_2_idx) in enumerate(zip(couples[0], couples[1])):
-            estimated_pref[idx] = self.estimate_preferences(all_trajectories[traj_1_idx], all_trajectories[traj_2_idx])  # each has shape [2]
-            human_pref[idx] = human.compare(all_trajectories[traj_1_idx], all_trajectories[traj_2_idx])  # each has shape [2]
+            start = np.random.randint(0, self.n_steps_per_update - self.segment_length)
+            estimated_pref[idx] = self.estimate_preferences(all_trajectories[traj_1_idx], all_trajectories[traj_2_idx], start)  # each has shape [2]
+            human_pref[idx] = human.compare(all_trajectories[traj_1_idx], all_trajectories[traj_2_idx], start)  # each has shape [2]
         loss = nn.CrossEntropyLoss(reduction='sum')(estimated_pref, human_pref)
         # print("loss", loss.item())
         return loss
