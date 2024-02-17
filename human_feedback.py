@@ -10,11 +10,13 @@ class Human():
         n_features_state: int,
         n_features_action: int,
         n_steps_per_update: int,
+        segment_length: int,
         dict_actions: dict
     ) -> None:
         self.n_features_state = n_features_state
         self.n_features_action = n_features_action
         self.n_steps_per_update = n_steps_per_update
+        self.segment_length = segment_length
         self.dict_actions = dict_actions
 
     def compare(self, traj_1: torch.Tensor, traj_2: torch.Tensor) -> torch.Tensor:
@@ -30,6 +32,9 @@ class Human():
         """
         # for tests only
         # return torch.softmax(torch.rand(2), dim=0)
+
+        start = np.random.randint(0, self.n_steps_per_update - self.segment_length)
+        end = start + self.segment_length
     
         actions_1 = traj_1[:,self.n_features_state:]
         actions_2 = traj_2[:,self.n_features_state:]
@@ -38,12 +43,22 @@ class Human():
         print("--- Trajectory 1 ---")
         review_env = gym.make("LunarLander-v2", render_mode="human").env
         review_env.reset()
-        for step in range(self.n_steps_per_update):
+
+        # initialization
+        for step in range(0, start):
+            action = torch.argmax(actions_1[step]).item()
+            _ = review_env.step(action)
+
+        # Display 
+        time.sleep(2)
+        print("begining of the trajectory")
+        for step in range(start, end):
             review_env.render()
             time.sleep(0.1)
             action = torch.argmax(actions_1[step]).item()
             # print("action played by the agent:", action, self.dict_actions[action])
             _ = review_env.step(action)
+        
         review_env.close()
         print("--- End of trajectory 1 ---", '\n')
 
@@ -53,7 +68,15 @@ class Human():
         print("--- Trajectory 2 ---")
         review_env = gym.make("LunarLander-v2", render_mode="human").env
         review_env.reset()
-        for step in range(self.n_steps_per_update):
+
+        # initialization
+        for step in range(0, start):
+            action = torch.argmax(actions_2[step]).item()
+            _ = review_env.step(action)
+
+        time.sleep(2)
+        print("begining of the trajectory")
+        for step in range(start, end):
             review_env.render()
             time.sleep(0.1)
             action = torch.argmax(actions_2[step]).item()

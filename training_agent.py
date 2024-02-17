@@ -15,6 +15,7 @@ class Trainer:
         n_updates: int, 
         n_steps_per_update: int,
         n_trajectories: int, 
+        segment_length: int,
         hidden_size: int,
         n_comp: int
     ):
@@ -36,6 +37,7 @@ class Trainer:
         self.n_updates = n_updates
         self.n_steps_per_update = n_steps_per_update
         self.n_trajectories = n_trajectories
+        self.segment_length = segment_length
 
         # Device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -58,7 +60,7 @@ class Trainer:
         # Init the reward
         self.reward_predictor = Reward_predictor(self.n_features_state, self.n_features_action, hidden_size, self.device, reward_lr)
         # Init the human
-        self.human = Human(self.n_features_state, self.n_features_action, n_steps_per_update, self.dict_actions)
+        self.human = Human(self.n_features_state, self.n_features_action, n_steps_per_update, self.segment_length, self.dict_actions)
 
         self.critic_losses = []
         self.actor_losses = []
@@ -167,11 +169,12 @@ class Trainer:
 
 trainer = Trainer(
     env_name="LunarLander-v2",
-    n_updates=100,
-    n_steps_per_update=32,
+    n_updates=5,
+    n_steps_per_update=128,
     n_trajectories=15,
+    segment_length=32,
     hidden_size=32,
-    n_comp=4
+    n_comp=1
 )
 
 trainer.train()
